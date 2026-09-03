@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ChargeReady Market Map</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Arial, sans-serif; }
+    #map { height: 100vh; width: 100%; }
+
+    #panel {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      z-index: 1000;
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+      width: 230px;
+      max-height: 90vh;
+      overflow-y: auto;
+    }
+
+    #panel-header {
+      background: #2c3e50;
+      color: white;
+      padding: 10px 12px;
+      border-radius: 8px 8px 0 0;
+      font-weight: bold;
+      font-size: 13px;
+    }
+
+    .group { border-bottom: 1px solid #e0e0e0; }
+
+    .group-header {
+      background: #ecf0f1;
+      padding: 7px 12px;
+      font-weight: bold;
+      font-size: 11px;
+      color: #2c3e50;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      user-select: none;
+    }
+    .group-header:hover { background: #d5dbdb; }
+
+    .group-content { padding: 4px 0; }
+
+    .layer-item {
+      display: flex;
+      align-items: center;
+      padding: 4px 12px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .layer-item:hover { background: #f8f9fa; }
+    .layer-item input[type="checkbox"] { margin-right: 7px; cursor: pointer; flex-shrink: 0; }
+
+    .swatch {
+      width: 13px;
+      height: 13px;
+      border-radius: 2px;
+      margin-right: 6px;
+      border: 1px solid rgba(0,0,0,0.25);
+      flex-shrink: 0;
+    }
+    .swatch-circle { border-radius: 50%; }
+
+    .collapsed .group-content { display: none; }
+    .arrow { font-size: 10px; }
+  </style>
+</head>
+<body>
+<div id="map"></div>
+<div id="panel">
+  <div id="panel-header">ChargeReady Market Map</div>
+  <div id="layer-control"></div>
+</div>
+
+<script>
+const map = L.map('map', { center: [40.0, -89.2], zoom: 7 });
+
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '© OpenStreetMap contributors',
+  maxZoom: 19
+}).addTo(map);
+
+// ── Color configs ──────────────────────────────────────────
+const PRIORITY_COLORS = {
+  'P1 T1 Hot':     '#d73027',
+  'P2 T1 Warm':    '#f46d43',
+  'P3 T1 Cold':    '#4575b4',
+  'P4 T2 Hot':     '#e0a800',
+  'P5 T1 Ice':     '#74c2e1',
+  'P6 T2 Monitor': '#aaaaaa',
+};
+
+const EV_COLORS = {
+  'Very High (300+)':  '#4a0078',
+  'High (100-299)':    '#7b2d8b',
+  'Moderate (25-99)':  '#b05ba6',
+  'Low (10-24)':       '#d4a0c7',
+  'Very Low (<10)':    '#f0dff0',
+};
+
+const SF_COLORS = {
+  '1 - Low (<500)':         '#ffffcc',
+  '2 - Medium (500-2,000)': '#a1dab4',
+  '3 - High (2,000-5,000)': '#41b6c4',
+  '4 - Very High (5,000+)': '#225ea8',
+};
+
+const TIER_COLORS = { T1: '#e74c3c', T2: '#3498db' };
+
+// ── Layer storage ──────────────────────────────────────────
+const layers = {};
+
+// ── Build control panel ────────────────────────────────────
+function buildControl(groups) {
+  const ctrl = document.getElementById('layer-control');
+  groups.forEach(group => {
+    const groupDiv = document.createElement('div');
+    groupDiv.className = 'group';
+
+    const header = document.createElement('div');
+    header.className = 'group-header';
+    header.innerHTML = `<span>${group.name}</span><span class="arrow">▼</span>`;
+    header.onclick = () => {
+      groupDiv.classList.toggle('collapsed');
+      header.querySelector('.arrow').textContent =
+        groupDiv.classList.contains('collapsed') ? '▶' : '▼';
+    };
+
+    const content = document.createElement('div');
+    content.className = 'group-content';
+
+    group.items.forEach(item => {
+      const row = document.createElement('div');
+      row.className = 'layer-item';
+
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = item.defaultOn;
+      cb.id = item.key;
+
+      const swatch = document.createElement('div');
+      swatch.className = 'swatch' + (item.circle ? ' swatch-circle' : '');
+      swatch.style.background = item.color;
+
+      const label = document.createElement('label');
+      label.htmlFor = item.key;
+      label.textContent = item.label;
+      label.style.cursor = 'pointer';
+
+      cb.onchange = () => {
+        if (layers[item.key]) {
+          cb.checked ? map.addLayer(layers[item.key]) : map.removeLayer(layers[item.key]);
+        }
+      };
+
+      row.appendChild(cb); row.appendChild(swatch); row.appendChild(label);
+      content.appendChild(row);
+    });
+
+    groupDiv.appendChild(header);
+    groupDiv.appendChild(content);
+    ctrl.appendChild(groupDiv);
+  });
+}
+
+const groupDefs = [
+  {
+    name: 'ZIP Priority Groups',
+    items: Object.keys(PRIORITY_COLORS).map(cls => ({
+      key: 'priority_' + cls.replace(/\s/g, '_'),
+      label: cls,
+      color: PRIORITY_COLORS[cls],
+      defaultOn: ['P1 T1 Hot','P2 T1 Warm','P3 T1 Cold','P4 T2 Hot'].includes(cls),
+    }))
+  },
+  {
+    name: 'EV Counts',
+    items: Object.keys(EV_COLORS).map(cls => ({
+      key: 'ev_' + cls.replace(/[\s()+]/g, '_'),
+      label: cls,
+      color: EV_COLORS[cls],
+      defaultOn: false,
+    }))
+  },
+  {
+    name: 'SF Housing Density',
+    items: Object.keys(SF_COLORS).map(cls => ({
+      key: 'sf_' + cls.replace(/[\s\-,()]+/g, '_'),
+      label: cls,
+      color: SF_COLORS[cls],
+      defaultOn: false,
+    }))
+  },
+  {
+    name: 'Multifamily Prospects',
+    items: [
+      { key: 'mf_T1', label: 'Tier 1 Properties', color: '#e74c3c', circle: true, defaultOn: true },
+      { key: 'mf_T2', label: 'Tier 2 Properties', color: '#3498db', circle: true, defaultOn: true },
+    ]
+  },
+  {
+    name: 'Eligibility Areas',
+    items: [
+      { key: 'ejc',  label: 'EJC 2026',      color: '#e74c3c', defaultOn: false },
+      { key: 'ceja', label: 'CEJA Adjacent',  color: '#e67e22', defaultOn: false },
+      { key: 'r3',   label: 'R3 Designated',  color: '#8e44ad', defaultOn: false },
+      { key: 'lmi',  label: 'LMI (51%+)',     color: '#27ae60', defaultOn: false },
+    ]
+  },
+];
+
+buildControl(groupDefs);
+
+// ── Helpers ────────────────────────────────────────────────
+function polyStyle(color, fillOpacity = 0.5) {
+  return { color, weight: 0.5, opacity: 0.8, fillColor: color, fillOpacity };
+}
+
+function addWhenReady(key, lyr) {
+  layers[key] = lyr;
+  if (document.getElementById(key) && document.getElementById(key).checked) {
+    lyr.addTo(map);
+  }
+}
+
+// ── ZIP Priority ───────────────────────────────────────────
+fetch('zip_priority.geojson').then(r => r.json()).then(data => {
+  Object.keys(PRIORITY_COLORS).forEach(cls => {
+    const key = 'priority_' + cls.replace(/\s/g, '_');
+    const features = data.features.filter(f => f.properties.PRIORITY_CLASS === cls);
+    addWhenReady(key, L.geoJSON({ type: 'FeatureCollection', features }, {
+      style: polyStyle(PRIORITY_COLORS[cls]),
+      onEachFeature: (f, l) => {
+        const p = f.properties;
+        l.bindPopup(`<b>ZIP ${p.ZIP}</b><br>
+          Priority: <b>${p.PRIORITY_CLASS}</b><br>
+          Score: ${p.COMPOSITE_SCORE}<br>
+          EJC: ${p.IS_EJC} &nbsp;|&nbsp; CEJA: ${p.IS_CEJA}<br>
+          R3: ${p.IS_R3} &nbsp;|&nbsp; LMI: ${p.IS_LMI}`);
+      }
+    }));
+  });
+});
+
+// ── EV Counts ──────────────────────────────────────────────
+fetch('ev_counts.geojson').then(r => r.json()).then(data => {
+  Object.keys(EV_COLORS).forEach(cls => {
+    const key = 'ev_' + cls.replace(/[\s()+]/g, '_');
+    const features = data.features.filter(f => f.properties.EV_CLASS === cls);
+    addWhenReady(key, L.geoJSON({ type: 'FeatureCollection', features }, {
+      style: polyStyle(EV_COLORS[cls]),
+      onEachFeature: (f, l) => {
+        const p = f.properties;
+        l.bindPopup(`<b>ZIP ${p.ZIP}</b><br>
+          EV Class: <b>${p.EV_CLASS}</b><br>
+          Total EVs: ${p.EV_TOTAL}<br>
+          Added last 12mo: ${p.ADDED_LAST_12MO}`);
+      }
+    }));
+  });
+});
+
+// ── SF Housing Density ─────────────────────────────────────
+fetch('sf_housing.geojson').then(r => r.json()).then(data => {
+  Object.keys(SF_COLORS).forEach(cls => {
+    const key = 'sf_' + cls.replace(/[\s\-,()]+/g, '_');
+    const features = data.features.filter(f => f.properties.SF_CLASS === cls);
+    addWhenReady(key, L.geoJSON({ type: 'FeatureCollection', features }, {
+      style: polyStyle(SF_COLORS[cls], 0.45),
+      onEachFeature: (f, l) => {
+        const p = f.properties;
+        l.bindPopup(`<b>ZIP ${p.ZIP}</b><br>
+          SF Class: <b>${p.SF_CLASS}</b><br>
+          SF Units: ${p.SF_HU ? p.SF_HU.toLocaleString() : 'N/A'}`);
+      }
+    }));
+  });
+});
+
+// ── MF Prospects ───────────────────────────────────────────
+fetch('mf_prospects.geojson').then(r => r.json()).then(data => {
+  ['T1', 'T2'].forEach(tier => {
+    const key = 'mf_' + tier;
+    const features = data.features.filter(f => f.properties.TIER === tier);
+    addWhenReady(key, L.geoJSON({ type: 'FeatureCollection', features }, {
+      pointToLayer: (f, latlng) => L.circleMarker(latlng, {
+        radius: 6,
+        fillColor: TIER_COLORS[tier],
+        color: '#fff',
+        weight: 1,
+        opacity: 1,
+        fillOpacity: 0.85,
+      }),
+      onEachFeature: (f, l) => {
+        const p = f.properties;
+        l.bindPopup(`<b>${p.PROPERTY_NAME}</b><br>
+          ${p.ADDRESS}, ${p.CITY}<br>
+          ZIP: ${p.ZIP} &nbsp;|&nbsp; ${p.TIER} &nbsp;|&nbsp; ${p.ACTIVITY}<br>
+          ${p.PHONE ? 'Ph: ' + p.PHONE + '<br>' : ''}
+          ${p.WEBSITE ? '<a href="' + p.WEBSITE + '" target="_blank">Website</a>' : ''}`);
+      }
+    }));
+  });
+});
+
+// ── Eligibility Areas ──────────────────────────────────────
+[
+  { key: 'ejc',  file: 'ejc.geojson',  color: '#e74c3c',
+    popup: p => `<b>EJC 2026</b><br>GEOID: ${p.GEOID}<br>County: ${p.County}` },
+  { key: 'ceja', file: 'ceja.geojson', color: '#e67e22',
+    popup: p => `<b>CEJA Adjacent</b><br>GEOID: ${p.GEOID}<br>County: ${p.County}` },
+  { key: 'r3',   file: 'r3.geojson',   color: '#8e44ad',
+    popup: p => `<b>R3 Designated</b><br>GEOID: ${p.GEOID}` },
+  { key: 'lmi',  file: 'lmi.geojson',  color: '#27ae60',
+    popup: p => `<b>LMI Qualifying</b><br>GEOID: ${p.GEOID}<br>LowMod: ${p.LOWMOD_PCT !== null ? (p.LOWMOD_PCT * 100).toFixed(1) + '%' : 'N/A'}` },
+].forEach(def => {
+  fetch(def.file).then(r => r.json()).then(data => {
+    addWhenReady(def.key, L.geoJSON(data, {
+      style: polyStyle(def.color, 0.35),
+      onEachFeature: (f, l) => l.bindPopup(def.popup(f.properties))
+    }));
+  });
+});
+</script>
+</body>
+</html>
