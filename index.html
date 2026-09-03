@@ -87,27 +87,51 @@
 <script>
 const map = L.map('map', { center: [40.0, -89.2], zoom: 7 });
 
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  attribution: '© OpenStreetMap contributors',
+// Satellite basemap (ESRI) + label overlay
+L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+  attribution: 'Tiles © Esri',
   maxZoom: 19
 }).addTo(map);
 
-// ── Color configs ──────────────────────────────────────────
+L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
+  maxZoom: 19,
+  opacity: 0.8
+}).addTo(map);
+
+// ── Color configs (keys must match actual data values) ─────
+
 const PRIORITY_COLORS = {
-  'P1 T1 Hot':     '#d73027',
-  'P2 T1 Warm':    '#f46d43',
-  'P3 T1 Cold':    '#4575b4',
-  'P4 T2 Hot':     '#e0a800',
-  'P5 T1 Ice':     '#74c2e1',
-  'P6 T2 Monitor': '#aaaaaa',
+  '1 - T1 Hot':     '#d73027',
+  '2 - T1 Warm':    '#f46d43',
+  '3 - T1 Cold':    '#4575b4',
+  '4 - T2 Hot':     '#e0a800',
+  '5 - T1 Ice':     '#74c2e1',
+  '6 - T2 Monitor': '#aaaaaa',
+};
+
+const PRIORITY_LABELS = {
+  '1 - T1 Hot':     'P1 – T1 Hot',
+  '2 - T1 Warm':    'P2 – T1 Warm',
+  '3 - T1 Cold':    'P3 – T1 Cold',
+  '4 - T2 Hot':     'P4 – T2 Hot',
+  '5 - T1 Ice':     'P5 – T1 Ice',
+  '6 - T2 Monitor': 'P6 – T2 Monitor',
 };
 
 const EV_COLORS = {
-  'Very High (300+)':  '#4a0078',
-  'High (100-299)':    '#7b2d8b',
-  'Moderate (25-99)':  '#b05ba6',
-  'Low (10-24)':       '#d4a0c7',
-  'Very Low (<10)':    '#f0dff0',
+  '1 - Very High (300+)':  '#4a0078',
+  '2 - High (100-299)':    '#7b2d8b',
+  '3 - Moderate (25-99)':  '#b05ba6',
+  '4 - Low (10-24)':       '#d4a0c7',
+  '5 - Very Low (<10)':    '#e8cfe8',
+};
+
+const EV_LABELS = {
+  '1 - Very High (300+)':  'Very High (300+)',
+  '2 - High (100-299)':    'High (100–299)',
+  '3 - Moderate (25-99)':  'Moderate (25–99)',
+  '4 - Low (10-24)':       'Low (10–24)',
+  '5 - Very Low (<10)':    'Very Low (<10)',
 };
 
 const SF_COLORS = {
@@ -117,7 +141,18 @@ const SF_COLORS = {
   '4 - Very High (5,000+)': '#225ea8',
 };
 
-const TIER_COLORS = { T1: '#e74c3c', T2: '#3498db' };
+const SF_LABELS = {
+  '1 - Low (<500)':         'Low (<500 units)',
+  '2 - Medium (500-2,000)': 'Medium (500–2,000)',
+  '3 - High (2,000-5,000)': 'High (2,000–5,000)',
+  '4 - Very High (5,000+)': 'Very High (5,000+)',
+};
+
+// MF tiers — match on startsWith since values have long descriptions
+const MF_TIERS = [
+  { key: 'mf_T1', label: 'Tier 1 – EIEC',     prefix: 'T1', color: '#e74c3c' },
+  { key: 'mf_T2', label: 'Tier 2 – Non-EIEC',  prefix: 'T2', color: '#3498db' },
+];
 
 // ── Layer storage ──────────────────────────────────────────
 const layers = {};
@@ -179,17 +214,17 @@ const groupDefs = [
   {
     name: 'ZIP Priority Groups',
     items: Object.keys(PRIORITY_COLORS).map(cls => ({
-      key: 'priority_' + cls.replace(/\s/g, '_'),
-      label: cls,
+      key: 'priority_' + cls.replace(/[\s\-]+/g, '_'),
+      label: PRIORITY_LABELS[cls],
       color: PRIORITY_COLORS[cls],
-      defaultOn: ['P1 T1 Hot','P2 T1 Warm','P3 T1 Cold','P4 T2 Hot'].includes(cls),
+      defaultOn: ['1 - T1 Hot','2 - T1 Warm','3 - T1 Cold','4 - T2 Hot'].includes(cls),
     }))
   },
   {
     name: 'EV Counts',
     items: Object.keys(EV_COLORS).map(cls => ({
-      key: 'ev_' + cls.replace(/[\s()+]/g, '_'),
-      label: cls,
+      key: 'ev_' + cls.replace(/[\s\-()]+/g, '_'),
+      label: EV_LABELS[cls],
       color: EV_COLORS[cls],
       defaultOn: false,
     }))
@@ -198,17 +233,20 @@ const groupDefs = [
     name: 'SF Housing Density',
     items: Object.keys(SF_COLORS).map(cls => ({
       key: 'sf_' + cls.replace(/[\s\-,()]+/g, '_'),
-      label: cls,
+      label: SF_LABELS[cls],
       color: SF_COLORS[cls],
       defaultOn: false,
     }))
   },
   {
     name: 'Multifamily Prospects',
-    items: [
-      { key: 'mf_T1', label: 'Tier 1 Properties', color: '#e74c3c', circle: true, defaultOn: true },
-      { key: 'mf_T2', label: 'Tier 2 Properties', color: '#3498db', circle: true, defaultOn: true },
-    ]
+    items: MF_TIERS.map(t => ({
+      key: t.key,
+      label: t.label,
+      color: t.color,
+      circle: true,
+      defaultOn: true,
+    }))
   },
   {
     name: 'Eligibility Areas',
@@ -224,23 +262,22 @@ const groupDefs = [
 buildControl(groupDefs);
 
 // ── Helpers ────────────────────────────────────────────────
-function polyStyle(color, fillOpacity = 0.5) {
-  return { color, weight: 0.5, opacity: 0.8, fillColor: color, fillOpacity };
+function polyStyle(color, fillOpacity) {
+  return { color, weight: 0.5, opacity: 0.8, fillColor: color, fillOpacity: fillOpacity || 0.5 };
 }
 
-function addWhenReady(key, lyr) {
+function addLayer(key, lyr) {
   layers[key] = lyr;
-  if (document.getElementById(key) && document.getElementById(key).checked) {
-    lyr.addTo(map);
-  }
+  const cb = document.getElementById(key);
+  if (cb && cb.checked) lyr.addTo(map);
 }
 
 // ── ZIP Priority ───────────────────────────────────────────
 fetch('zip_priority.geojson').then(r => r.json()).then(data => {
   Object.keys(PRIORITY_COLORS).forEach(cls => {
-    const key = 'priority_' + cls.replace(/\s/g, '_');
+    const key = 'priority_' + cls.replace(/[\s\-]+/g, '_');
     const features = data.features.filter(f => f.properties.PRIORITY_CLASS === cls);
-    addWhenReady(key, L.geoJSON({ type: 'FeatureCollection', features }, {
+    addLayer(key, L.geoJSON({ type: 'FeatureCollection', features }, {
       style: polyStyle(PRIORITY_COLORS[cls]),
       onEachFeature: (f, l) => {
         const p = f.properties;
@@ -257,9 +294,9 @@ fetch('zip_priority.geojson').then(r => r.json()).then(data => {
 // ── EV Counts ──────────────────────────────────────────────
 fetch('ev_counts.geojson').then(r => r.json()).then(data => {
   Object.keys(EV_COLORS).forEach(cls => {
-    const key = 'ev_' + cls.replace(/[\s()+]/g, '_');
+    const key = 'ev_' + cls.replace(/[\s\-()]+/g, '_');
     const features = data.features.filter(f => f.properties.EV_CLASS === cls);
-    addWhenReady(key, L.geoJSON({ type: 'FeatureCollection', features }, {
+    addLayer(key, L.geoJSON({ type: 'FeatureCollection', features }, {
       style: polyStyle(EV_COLORS[cls]),
       onEachFeature: (f, l) => {
         const p = f.properties;
@@ -272,18 +309,18 @@ fetch('ev_counts.geojson').then(r => r.json()).then(data => {
   });
 });
 
-// ── SF Housing Density ─────────────────────────────────────
+// ── SF Housing ─────────────────────────────────────────────
 fetch('sf_housing.geojson').then(r => r.json()).then(data => {
   Object.keys(SF_COLORS).forEach(cls => {
     const key = 'sf_' + cls.replace(/[\s\-,()]+/g, '_');
     const features = data.features.filter(f => f.properties.SF_CLASS === cls);
-    addWhenReady(key, L.geoJSON({ type: 'FeatureCollection', features }, {
+    addLayer(key, L.geoJSON({ type: 'FeatureCollection', features }, {
       style: polyStyle(SF_COLORS[cls], 0.45),
       onEachFeature: (f, l) => {
         const p = f.properties;
         l.bindPopup(`<b>ZIP ${p.ZIP}</b><br>
           SF Class: <b>${p.SF_CLASS}</b><br>
-          SF Units: ${p.SF_HU ? p.SF_HU.toLocaleString() : 'N/A'}`);
+          SF Units: ${p.SF_HU ? Number(p.SF_HU).toLocaleString() : 'N/A'}`);
       }
     }));
   });
@@ -291,13 +328,13 @@ fetch('sf_housing.geojson').then(r => r.json()).then(data => {
 
 // ── MF Prospects ───────────────────────────────────────────
 fetch('mf_prospects.geojson').then(r => r.json()).then(data => {
-  ['T1', 'T2'].forEach(tier => {
-    const key = 'mf_' + tier;
-    const features = data.features.filter(f => f.properties.TIER === tier);
-    addWhenReady(key, L.geoJSON({ type: 'FeatureCollection', features }, {
+  MF_TIERS.forEach(tier => {
+    const features = data.features.filter(f =>
+      f.properties.TIER && f.properties.TIER.startsWith(tier.prefix));
+    addLayer(tier.key, L.geoJSON({ type: 'FeatureCollection', features }, {
       pointToLayer: (f, latlng) => L.circleMarker(latlng, {
         radius: 6,
-        fillColor: TIER_COLORS[tier],
+        fillColor: tier.color,
         color: '#fff',
         weight: 1,
         opacity: 1,
@@ -307,7 +344,8 @@ fetch('mf_prospects.geojson').then(r => r.json()).then(data => {
         const p = f.properties;
         l.bindPopup(`<b>${p.PROPERTY_NAME}</b><br>
           ${p.ADDRESS}, ${p.CITY}<br>
-          ZIP: ${p.ZIP} &nbsp;|&nbsp; ${p.TIER} &nbsp;|&nbsp; ${p.ACTIVITY}<br>
+          ZIP: ${p.ZIP}<br>
+          ${p.TIER}<br>
           ${p.PHONE ? 'Ph: ' + p.PHONE + '<br>' : ''}
           ${p.WEBSITE ? '<a href="' + p.WEBSITE + '" target="_blank">Website</a>' : ''}`);
       }
@@ -327,7 +365,7 @@ fetch('mf_prospects.geojson').then(r => r.json()).then(data => {
     popup: p => `<b>LMI Qualifying</b><br>GEOID: ${p.GEOID}<br>LowMod: ${p.LOWMOD_PCT !== null ? (p.LOWMOD_PCT * 100).toFixed(1) + '%' : 'N/A'}` },
 ].forEach(def => {
   fetch(def.file).then(r => r.json()).then(data => {
-    addWhenReady(def.key, L.geoJSON(data, {
+    addLayer(def.key, L.geoJSON(data, {
       style: polyStyle(def.color, 0.35),
       onEachFeature: (f, l) => l.bindPopup(def.popup(f.properties))
     }));
